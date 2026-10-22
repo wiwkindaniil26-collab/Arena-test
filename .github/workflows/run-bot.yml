@@ -1,0 +1,85 @@
+name: Run bot
+
+# Запуск бота прямо в GitHub Actions.
+#
+# Важно: GitHub-hosted runner живёт максимум 6 часов, поэтому job сам
+# останавливается за 15 минут до лимита, а расписание перезапускает его.
+# Это удобно для теста и демо, но не заменяет постоянный хостинг.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # каждые 6 часов (время UTC): 00:00, 06:00, 12:00, 18:00
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: read
+
+# одновременно может работать только один polling-процесс,
+# иначе Telegram вернёт конфликт getUpdates
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check ffmpeg
+        run: ffmpeg -version | head -n 1
+
+      - name: Check token
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "::error::Нет секрета BOT_TOKEN. Добавь его в Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+
+      # библиотека переживает перезапуски через кэш Actions (best-effort)
+      - name: Restore library
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: bot-data-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bot-data-
+
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ALLOWED_USERS: ${{ vars.ALLOWED_USERS }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+        run: |
+          set +e
+          timeout -s TERM 20700 python -m bot
+          status=$?
+          if [ "$status" -eq 124 ] || [ "$status" -eq 143 ]; then
+            echo "Бот остановлен по таймеру (лимит job — 6 часов), следующий запуск по расписанию"
+            exit 0
+          fi
+          exit "$status"
+
+      - name: Save library
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: bot-data-${{ github.run_id }}-${{ github.run_attempt }}

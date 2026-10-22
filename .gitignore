@@ -1,0 +1,26 @@
+# окружение
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# секреты и локальные данные
+.env
+data/
+*.session
+*.db
+*.db-wal
+*.db-shm
+
+# редакторы / ОС
+.idea/
+.vscode/
+.DS_Store
+
+# артефакты
+dist/
+build/
+*.egg-info/

@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 MB = 1024 * 1024
 
 
+RUN_MODES = ("polling", "webhook")
+
+
 class ConfigError(RuntimeError):
     """Конфигурация заполнена некорректно."""
 
@@ -64,6 +67,7 @@ class Config:
     """Все настройки приложения в одном неизменяемом объекте."""
 
     bot_token: str
+    run_mode: str = "polling"
     db_path: Path = Path("data/music.db")
     download_dir: Path = Path("data/downloads")
     max_file_size_mb: int = 50
@@ -73,13 +77,29 @@ class Config:
     rate_limit_window: int = 60
     audio_quality: str = "192"
     cookies_file: Path | None = None
+    #: содержимое cookies.txt из переменной окружения (для хостингов без volume)
+    cookies_content: str | None = None
     proxy: str | None = None
     allowed_users: frozenset[int] = field(default_factory=frozenset)
     log_level: str = "INFO"
+    # webhook-режим: нужен для хостингов без долгоживущего процесса
+    # (Cloudflare Containers, некоторые PaaS)
+    webhook_base_url: str = ""
+    webhook_path: str = "/webhook"
+    webhook_secret: str = ""
+    host: str = "0.0.0.0"
+    port: int = 8080
 
     @property
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * MB
+
+    @property
+    def webhook_url(self) -> str:
+        """Полный публичный URL, который отдаём Telegram."""
+        base = self.webhook_base_url.rstrip("/")
+        path = self.webhook_path if self.webhook_path.startswith("/") else f"/{self.webhook_path}"
+        return f"{base}{path}"
 
     @classmethod
     def from_env(
@@ -104,6 +124,29 @@ class Config:
                 "BOT_TOKEN выглядит подозрительно (нет ':' между id и секретом). Проверь токен."
             )
 
+        run_mode = (env.get("RUN_MODE", "polling").strip() or "polling").lower()
+        if run_mode not in RUN_MODES:
+            raise ConfigError(
+                f"RUN_MODE должен быть одним из {', '.join(RUN_MODES)}, получено: {run_mode!r}"
+            )
+
+        webhook_base_url = env.get("WEBHOOK_BASE_URL", "").strip().rstrip("/")
+        if run_mode == "webhook":
+            if not webhook_base_url:
+                raise ConfigError(
+                    "В режиме webhook нужен WEBHOOK_BASE_URL — публичный адрес бота "
+                    "(например https://my-bot.example.workers.dev)."
+                )
+            if not webhook_base_url.startswith(("http://", "https://")):
+                raise ConfigError(
+                    "WEBHOOK_BASE_URL должен начинаться с http(s)://, "
+                    f"получено: {webhook_base_url!r}"
+                )
+
+        webhook_path = env.get("WEBHOOK_PATH", "/webhook").strip() or "/webhook"
+        if not webhook_path.startswith("/"):
+            webhook_path = "/" + webhook_path
+
         max_file_size_mb = _get_int(env, "MAX_FILE_SIZE_MB", 50, minimum=1, maximum=2000)
         quality = env.get("AUDIO_QUALITY", "192").strip() or "192"
         if not quality.isdigit():
@@ -111,6 +154,12 @@ class Config:
 
         return cls(
             bot_token=token,
+            run_mode=run_mode,
+            webhook_base_url=webhook_base_url,
+            webhook_path=webhook_path,
+            webhook_secret=env.get("WEBHOOK_SECRET", "").strip(),
+            host=env.get("HOST", "0.0.0.0").strip() or "0.0.0.0",
+            port=_get_int(env, "PORT", 8080, minimum=1, maximum=65535),
             db_path=Path(env.get("DB_PATH", "data/music.db").strip() or "data/music.db"),
             download_dir=Path(
                 env.get("DOWNLOAD_DIR", "data/downloads").strip() or "data/downloads"
@@ -124,6 +173,7 @@ class Config:
             rate_limit_window=_get_int(env, "RATE_LIMIT_WINDOW", 60, minimum=1),
             audio_quality=quality,
             cookies_file=_get_optional_path(env, "COOKIES_FILE"),
+            cookies_content=env.get("COOKIES_CONTENT", "").strip() or None,
             proxy=env.get("PROXY", "").strip() or None,
             allowed_users=_get_allowed_users(env, "ALLOWED_USERS"),
             log_level=env.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",

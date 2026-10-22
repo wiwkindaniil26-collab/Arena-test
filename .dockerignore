@@ -9,4 +9,10 @@ data
 .env
 tests
 .github
+node_modules
+cloudflare
+package.json
+package-lock.json
+tsconfig.json
+wrangler.toml
 *.md

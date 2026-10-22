@@ -1,0 +1,34 @@
+# Конфигурация Cloudflare Containers.
+#
+# Бот живёт в Docker-контейнере, а Worker принимает запросы от Telegram
+# и проксирует их внутрь. Поэтому режим — webhook, а не polling.
+#
+# Деплой:  npm install && npx wrangler deploy
+
+name = "tg-music-bot"
+main = "cloudflare/src/index.ts"
+compatibility_date = "2026-10-22"
+upload_source_maps = true
+
+[observability]
+enabled = true
+
+[[containers]]
+class_name = "MusicBotContainer"
+# образ и размер задаются в коде Durable Object (ctx.container.start)
+scheduling_policy = "durable_object"
+
+[containers.images.bot]
+dockerfile = "./Dockerfile"
+
+# Keep-alive: раскомментируй, если контейнер не должен засыпать (дороже).
+# [triggers]
+# crons = ["*/5 * * * *"]
+
+[[durable_objects.bindings]]
+name = "MUSIC_BOT"
+class_name = "MusicBotContainer"
+
+[exports.MusicBotContainer]
+type = "durable-object"
+storage = "sqlite"

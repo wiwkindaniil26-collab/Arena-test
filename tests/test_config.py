@@ -75,6 +75,31 @@ class TestConfig:
         with pytest.raises(ConfigError, match="ALLOWED_USERS"):
             Config.from_env(make_env(ALLOWED_USERS="1,not-an-id"), load_env_file=False)
 
+    def test_cookies_content_written_to_file(self, tmp_path: Path) -> None:
+        from bot.main import resolve_cookies_file
+
+        config = Config.from_env(
+            make_env(
+                DB_PATH=str(tmp_path / "data" / "m.db"),
+                COOKIES_CONTENT="# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t0\tk\tv",
+            ),
+            load_env_file=False,
+        )
+        config.prepare_dirs()
+        resolved = resolve_cookies_file(config)
+
+        assert resolved.cookies_file is not None
+        assert resolved.cookies_file.exists()
+        assert "Netscape" in resolved.cookies_file.read_text()
+        assert resolved.cookies_content is None
+        assert oct(resolved.cookies_file.stat().st_mode)[-3:] == "600"
+
+    def test_cookies_content_empty_is_ignored(self) -> None:
+        from bot.main import resolve_cookies_file
+
+        config = Config.from_env(make_env(COOKIES_CONTENT="  "), load_env_file=False)
+        assert resolve_cookies_file(config).cookies_file is None
+
     def test_prepare_dirs(self, tmp_path: Path) -> None:
         config = Config.from_env(
             make_env(DB_PATH=str(tmp_path / "db" / "m.db"), DOWNLOAD_DIR=str(tmp_path / "dl")),

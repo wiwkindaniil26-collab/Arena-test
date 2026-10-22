@@ -6,12 +6,14 @@ import asyncio
 import logging
 import sys
 from contextlib import suppress
+from dataclasses import replace
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, ErrorEvent
 
+from bot import webhook as webhook_server
 from bot.config import Config, ConfigError
 from bot.db import Database
 from bot.handlers import common
@@ -96,6 +98,20 @@ def build_dispatcher(
     return dp
 
 
+def resolve_cookies_file(config: Config) -> Config:
+    """Если cookies переданы строкой (COOKIES_CONTENT) — раскладываем их в файл.
+
+    Это нужно на хостингах без постоянного диска: Cloudflare Containers, PaaS.
+    """
+    if not config.cookies_content:
+        return config
+    path = config.db_path.parent / "cookies.txt"
+    path.write_text(config.cookies_content, encoding="utf-8")
+    path.chmod(0o600)
+    logger.info("Cookies записаны из COOKIES_CONTENT в %s", path)
+    return replace(config, cookies_file=path, cookies_content=None)
+
+
 async def main() -> None:
     try:
         config = Config.from_env()
@@ -105,6 +121,7 @@ async def main() -> None:
 
     setup_logging(config.log_level)
     config.prepare_dirs()
+    config = resolve_cookies_file(config)
 
     if not config.cookies_file:
         logger.info("COOKIES_FILE не задан — источники, требующие входа, будут недоступны")
@@ -126,13 +143,17 @@ async def main() -> None:
 
     try:
         me = await bot.get_me()
-        logger.info("Бот @%s запущен", me.username)
+        logger.info("Бот @%s запущен (режим: %s)", me.username, config.run_mode)
         await bot.set_my_commands(BOT_COMMANDS)
-        await dp.start_polling(
-            bot,
-            allowed_updates=dp.resolve_used_update_types(),
-            handle_signals=True,
-        )
+
+        if config.run_mode == "webhook":
+            await webhook_server.serve(bot, dp, config)
+        else:
+            await dp.start_polling(
+                bot,
+                allowed_updates=dp.resolve_used_update_types(),
+                handle_signals=True,
+            )
     finally:
         await db.close()
         await bot.session.close()

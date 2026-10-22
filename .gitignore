@@ -20,6 +20,12 @@ data/
 .vscode/
 .DS_Store
 
+# node / Cloudflare
+node_modules/
+.wrangler/
+.wrangler-dry/
+.dev.vars
+
 # артефакты
 dist/
 build/
